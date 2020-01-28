@@ -329,13 +329,13 @@ def main(ini_path=None, overwrite_flag=False, delay_time=0, gee_key_file=None,
                 .rename(['tcorr']) \
                 .set({
                 'system:time_start': ee.Image(landsat_img).get('system:time_start'),
-                'tcorr': tcorr,
-                'count': count,
+                'tcorr_value': tcorr,
+                'tcorr_pixel_count': count,
             })
 
         # Filter the Tcorr image collection based on the pixel counts
         tcorr_coll = ee.ImageCollection(landsat_coll.map(tcorr_img_func)) \
-            .filterMetadata('count', 'not_less_than', min_pixel_count)
+            .filterMetadata('tcorr_pixel_count', 'not_less_than', min_pixel_count)
 
         # Use a common reducer for the image and property stats
         reducer = ee.Reducer.median() \
@@ -346,20 +346,21 @@ def main(ini_path=None, overwrite_flag=False, delay_time=0, gee_key_file=None,
         # tcorr_img = tcorr_coll.reduce(reducer).rename(['tcorr', 'count'])
 
         # Compute stats from the image properties
-        tcorr_stats = ee.List(tcorr_coll.aggregate_array('tcorr')) \
+        tcorr_stats = ee.List(tcorr_coll.aggregate_array('tcorr_value')) \
             .reduce(reducer)
         tcorr_stats = ee.Dictionary(tcorr_stats) \
             .combine({'median': 0, 'count': 0}, overwrite=False)
         tcorr = ee.Number(tcorr_stats.get('median'))
         count = ee.Number(tcorr_stats.get('count'))
+        index = ee.Algorithms.If(count.gte(min_scene_count), 2, 9)
 
         # Write an empty image if the pixel count is too low
         # CGM: Check/test if this can be combined into a single If()
         tcorr_img = ee.Algorithms.If(
-            count.gt(min_scene_count),
+            count.gte(min_scene_count),
             tmax_mask.add(tcorr), tmax_mask.updateMask(0))
         count_img = ee.Algorithms.If(
-            count.gt(min_scene_count),
+            count.gte(min_scene_count),
             tmax_mask.add(count), tmax_mask.updateMask(0))
 
         # Clip to the Landsat image footprint
@@ -371,13 +372,13 @@ def main(ini_path=None, overwrite_flag=False, delay_time=0, gee_key_file=None,
         output_img = output_img.updateMask(output_img.unmask(0))
 
         output_img = output_img.set({
-            'tcorr': tcorr,
-            'count': count,
-            'index': 2,
-            # 'system:time_start': utils.millis(start_dt),
             'date_ingested': datetime.datetime.today().strftime('%Y-%m-%d'),
             'model_name': model_name,
             'model_version': ssebop.__version__,
+            # 'system:time_start': utils.millis(start_dt),
+            'tcorr_value': tcorr,
+            'tcorr_index': index,
+            'tcorr_scene_count': count,
             'tmax_source': tmax_source.upper(),
             'tmax_version': tmax_version.upper(),
             'wrs2_path': wrs2_path,
@@ -428,7 +429,7 @@ def arg_parse():
         help='Maximum number of queued READY tasks')
     parser.add_argument(
         '--reverse', default=False, action='store_true',
-        help='Process dates in reverse order')
+        help='Process tiles in reverse order')
     parser.add_argument(
         '-o', '--overwrite', default=False, action='store_true',
         help='Force overwrite of existing files')
